@@ -9,7 +9,9 @@ async fn main() -> Result<()> {
     println!("I am {}", config.name);
     println!("I will connect to {:?}", config.connections);
 
-    tokio::spawn(async move { Node::new(config) });
+    // runs in background
+    let handle = tokio::spawn(async move { Node::new(config).await });
+    handle.await??;
 
     Ok(())
 }

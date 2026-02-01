@@ -8,7 +8,6 @@ use tokio::{
     sync::mpsc,
 };
 
-const USERNAME: &str = "jod323";
 const DOMAIN: &str = "cse.lehigh.edu";
 const PORT: u64 = 1895;
 

@@ -34,6 +34,7 @@ Commands:
   list                              List all nodes with their current CPU load
   run -n <num> [-- args...]         Run 'cargo run --release' on N least-loaded nodes
   exec -n <num> -- <command>        Run arbitrary command on N least-loaded nodes
+  kill [name]                       Kill processes on all nodes (default: 'dht')
 
 Options:
   -n <num>      Number of nodes to use (required for 'run' and 'exec')
@@ -47,6 +48,8 @@ Examples:
   sun run -n 5 -d ~/dev/cse476/project -- --config config.toml
   sun exec -n 3 -- hostname
   sun exec -n 5 -- "cd ~/dev/project && ./my_script.sh"
+  sun kill                          Kill 'dht' on all nodes
+  sun kill myapp                    Kill 'myapp' on all nodes
 
 Logs are saved to: logs/<node>.log
 
@@ -84,6 +87,27 @@ get_sorted_nodes() {
 
     sort -n "$tmp_file"
     rm -f "$tmp_file"
+}
+
+# Kill my dht binary running on all machines
+cmd_kill() {
+    local binary_name="${1:-dht}"
+
+    echo -e "${GREEN}=== Killing '$binary_name' on all nodes ===${NC}"
+    echo ""
+
+    for node in "${ALL_NODES[@]}"; do
+        local host="${node}.${DOMAIN}"
+        result=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes \
+            "${USERNAME}@${host}" "pkill -u $USERNAME $binary_name && echo 'killed' || echo 'none'" 2>/dev/null)
+        if [[ "$result" == "killed" ]]; then
+            echo -e "${YELLOW}[$node]${NC} killed $binary_name"
+        fi
+    done &
+    wait
+
+    echo ""
+    echo -e "${GREEN}Done${NC}"
 }
 
 # List command
@@ -420,6 +444,9 @@ exec)
         usage
     fi
     cmd_exec "$NUM_NODES" $EXTRA_ARGS
+    ;;
+kill)
+    cmd_kill "${EXTRA_ARGS:-dht}"
     ;;
 -h | --help)
     usage
