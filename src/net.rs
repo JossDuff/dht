@@ -13,12 +13,19 @@ use tracing::{error, info};
 const DOMAIN: &str = "cse.lehigh.edu";
 const PORT: u64 = 1895;
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReadyMessage(NodeId);
+
 pub struct Peers<K, V> {
     pub inbox: mpsc::Receiver<(NodeId, Message<K, V>)>,
     senders: HashMap<NodeId, mpsc::Sender<Message<K, V>>>,
 }
 
-impl<K, V> Peers<K, V> {
+impl<K, V> Peers<K, V>
+where
+    K: Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
     // send message to single node
     pub async fn send(&self, to: &NodeId, msg: Message<K, V>) -> Result<()> {
         let sender = self
@@ -39,7 +46,7 @@ async fn writer_task<K, V>(
     V: Serialize + for<'de> Deserialize<'de>,
 {
     while let Some(msg) = outbox.recv().await {
-        if let Err(e) = send_message(&mut write_half, &msg).await {
+        if let Err(e) = send_msg(&mut write_half, &msg).await {
             error!("[{}] Write error: {}", peer_id, e);
             break;
         }
@@ -55,7 +62,7 @@ async fn reader_task<K, V>(
     V: Serialize + for<'de> Deserialize<'de>,
 {
     loop {
-        match recv_message(&mut read_half).await {
+        match recv_msg(&mut read_half).await {
             Ok(msg) => {
                 if inbox.send((peer_id.clone(), msg)).await.is_err() {
                     break; // Main task shut down
@@ -70,10 +77,9 @@ async fn reader_task<K, V>(
 }
 
 // Handles serialization of the raw message
-async fn send_message<K, V, W>(stream: &mut W, msg: &Message<K, V>) -> Result<()>
+async fn send_msg<M, W>(stream: &mut W, msg: &M) -> Result<()>
 where
-    K: Serialize,
-    V: Serialize,
+    M: Serialize,
     W: AsyncWriteExt + Unpin,
 {
     let encoded = bincode::serialize(msg)?;
@@ -84,10 +90,9 @@ where
 }
 
 // handles deserialization of the raw message
-async fn recv_message<K, V, R>(stream: &mut R) -> Result<Message<K, V>>
+async fn recv_msg<M, R>(stream: &mut R) -> Result<M>
 where
-    K: for<'de> Deserialize<'de>,
-    V: for<'de> Deserialize<'de>,
+    M: for<'de> Deserialize<'de>,
     R: AsyncReadExt + Unpin,
 {
     let mut len_bytes = [0u8; 4];
@@ -101,7 +106,11 @@ where
     Ok(bincode::deserialize(&buffer)?)
 }
 
-pub async fn connect_all<K, V>(my_name: &str, sunlab_nodes: Vec<String>) -> Result<Peers<K, V>> {
+pub async fn connect_all<K, V>(my_name: &str, sunlab_nodes: Vec<String>) -> Result<Peers<K, V>>
+where
+    K: Serialize + for<'de> Deserialize<'de> + std::marker::Send + Sync + 'static,
+    V: Serialize + for<'de> Deserialize<'de> + std::marker::Send + Sync + 'static,
+{
     let listen_addr = format!("0.0.0.0:{PORT}");
     let listener = TcpListener::bind(&listen_addr).await?;
     info!("[{}] Listening on {}", my_name, listen_addr);
@@ -120,15 +129,14 @@ pub async fn connect_all<K, V>(my_name: &str, sunlab_nodes: Vec<String>) -> Resu
                     //let _ = stream.set_nodelay(true);
 
                     // Expect Ready message to identify peer
-                    match recv_message(&mut stream).await {
-                        Ok(Message::Ready { from }) => {
+                    match recv_msg(&mut stream).await {
+                        Ok(ReadyMessage(from)) => {
                             info!(
                                 "[{}] Accepted connection from {} ({})",
                                 my_name_owned, from, addr
                             );
                             let _ = accept_sender.send((from, stream)).await;
                         }
-                        Ok(_) => error!("Expected Ready, got something else"),
                         Err(e) => error!("Failed to read Ready: {}", e),
                     }
                 }
@@ -146,7 +154,7 @@ pub async fn connect_all<K, V>(my_name: &str, sunlab_nodes: Vec<String>) -> Resu
             my_name
         ))?;
         let my_node_id = NodeId {
-            sunlab_name: my_name,
+            sunlab_name: my_name.clone(),
             id: my_id,
         };
         let sender = conn_sender.clone();
@@ -158,9 +166,7 @@ pub async fn connect_all<K, V>(my_name: &str, sunlab_nodes: Vec<String>) -> Resu
                     //let _ = stream.set_nodelay(true);
 
                     // Identify ourselves
-                    if let Err(e) =
-                        send_message(&mut stream, &Message::Ready { from: my_node_id }).await
-                    {
+                    if let Err(e) = send_msg(&mut stream, &ReadyMessage(my_node_id.clone())).await {
                         error!("[{}] Failed to send Ready to {}: {}", my_name, peer_name, e);
                         return;
                     }
@@ -187,12 +193,12 @@ pub async fn connect_all<K, V>(my_name: &str, sunlab_nodes: Vec<String>) -> Resu
     info!("[{}] All {} peers connected", my_name, streams.len());
 
     // Now split each stream into reader/writer tasks with channels
-    let (inbox_sender, inbox_receiver) = mpsc::channel::<(NodeId, Message)>(256);
+    let (inbox_sender, inbox_receiver) = mpsc::channel::<(NodeId, Message<K, V>)>(256);
     let mut senders = HashMap::new();
 
     for (peer_id, stream) in streams {
         let (read_half, write_half) = stream.into_split();
-        let (outbox_sender, outbox_receiver) = mpsc::channel::<Message>(64);
+        let (outbox_sender, outbox_receiver) = mpsc::channel::<Message<K, V>>(64);
 
         // Reader task: recv from socket -> inbox
         let inbox_sender = inbox_sender.clone();

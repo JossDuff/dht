@@ -5,9 +5,12 @@ use anyhow::{anyhow, Result};
 pub use config::Config;
 use net::{connect_all, Peers};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::HashMap,
+    fmt::{self, Debug},
+};
 use tokio::sync::oneshot;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
 pub struct NodeId {
@@ -26,7 +29,11 @@ pub struct Node<K, V> {
     peers: Peers<K, V>,
 }
 
-impl<K, V> Node<K, V> {
+impl<K, V> Node<K, V>
+where
+    K: Send + Sync + 'static + Debug + Serialize + for<'de> Deserialize<'de>,
+    V: Send + Sync + 'static + Debug + Serialize + for<'de> Deserialize<'de>,
+{
     pub async fn new(config: Config, ready_sender: oneshot::Sender<bool>) -> Result<()> {
         // connect to all other nodes, then send ready check
         //let connections = make_connections(self.config);
@@ -50,7 +57,13 @@ impl<K, V> Node<K, V> {
                         Message::Get { key, req_id } => {
                             todo!()
                         }
+                        Message::GetResponse { val, req_id } => {
+                            todo!()
+                        }
                         Message::Put { key, val, req_id } => {
+                            todo!()
+                        }
+                        Message::PutResponse { success, req_id } => {
                             todo!()
                         }
                     }
@@ -69,7 +82,6 @@ impl<K, V> Node<K, V> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Message<K, V> {
-    Ready { from: NodeId },
     Get { key: K, req_id: u64 },
     GetResponse { val: Option<V>, req_id: u64 },
     Put { key: K, val: V, req_id: u64 },
