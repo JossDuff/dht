@@ -32,7 +32,7 @@ Usage: sun <command> [options]
 
 Commands:
   list                              List all nodes with their current CPU load
-  run -n <num> [-- args...]         Run 'cargo run --release' on N least-loaded nodes
+  run -n <num> [-- args...]         Run 'target/release/dht' on N least-loaded nodes
   exec -n <num> -- <command>        Run arbitrary command on N least-loaded nodes
   kill [name]                       Kill processes on all nodes (default: 'dht')
 
@@ -207,7 +207,7 @@ EOF
         for node in "${nodes[@]}"; do
             local host="${node}.${DOMAIN}"
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes \
-                "${USERNAME}@${host}" "pkill -f 'cargo run --release'" 2>/dev/null
+                "${USERNAME}@${host}" "pkill -u $USERNAME dht" 2>/dev/null
         done
 
         echo ""
@@ -295,7 +295,7 @@ cmd_run() {
         for node in "${nodes[@]}"; do
             local host="${node}.${DOMAIN}"
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes \
-                "${USERNAME}@${host}" "pkill -f 'cargo run --release'" 2>/dev/null
+                "${USERNAME}@${host}" "pkill -u $USERNAME dht" 2>/dev/null
         done
 
         echo ""
@@ -312,7 +312,7 @@ cmd_run() {
         local connections
         connections=$(get_connections "$node" "${nodes[@]}")
 
-        local cmd="cd $project_dir && cargo run --release -- --name $node --connections $connections"
+        local cmd="$project_dir/target/release/dht --name $node --connections $connections"
         if [[ -n "$program_args" ]]; then
             cmd="$cmd $program_args"
         fi
