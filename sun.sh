@@ -128,6 +128,25 @@ select_nodes() {
     done
 }
 
+# Build --connections arg for a node (all other nodes, comma-separated)
+get_connections() {
+    local current_node=$1
+    shift
+    local all_nodes=("$@")
+
+    local connections=""
+    for node in "${all_nodes[@]}"; do
+        if [[ "$node" != "$current_node" ]]; then
+            if [[ -n "$connections" ]]; then
+                connections="${connections},${node}"
+            else
+                connections="$node"
+            fi
+        fi
+    done
+    echo "$connections"
+}
+
 # Run commands on selected nodes
 run_on_nodes() {
     local command="$1"
@@ -228,14 +247,83 @@ cmd_run() {
 
     echo ""
     echo -e "Directory: ${BLUE}$project_dir${NC}"
-    echo -e "Args: ${BLUE}$program_args${NC}"
-
-    local cmd="cd $project_dir && cargo run --release"
     if [[ -n "$program_args" ]]; then
-        cmd="$cmd -- $program_args"
+        echo -e "Extra args: ${BLUE}$program_args${NC}"
     fi
 
-    run_on_nodes "$cmd" "${nodes[@]}"
+    rm -rf "$LOG_DIR"
+    mkdir -p "$LOG_DIR"
+
+    echo ""
+    echo -e "Logs: ${BLUE}$LOG_DIR${NC}"
+    echo ""
+
+    declare -A PIDS
+
+    cleanup() {
+        echo ""
+        echo -e "${RED}Caught interrupt, stopping all nodes...${NC}"
+
+        for node in "${!PIDS[@]}"; do
+            kill "${PIDS[$node]}" 2>/dev/null && echo -e "${YELLOW}[$node]${NC} stopped"
+        done
+
+        for node in "${nodes[@]}"; do
+            local host="${node}.${DOMAIN}"
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes \
+                "${USERNAME}@${host}" "pkill -f 'cargo run --release'" 2>/dev/null
+        done
+
+        echo ""
+        echo -e "${GREEN}=== Cleanup Complete ===${NC}"
+        echo -e "Logs: ${BLUE}$LOG_DIR${NC}"
+        exit 0
+    }
+
+    trap cleanup SIGINT SIGTERM
+
+    for node in "${nodes[@]}"; do
+        local host="${node}.${DOMAIN}"
+        local log_file="$LOG_DIR/${node}.log"
+        local connections
+        connections=$(get_connections "$node" "${nodes[@]}")
+
+        local cmd="cd $project_dir && cargo run --release -- --name $node --connections $connections"
+        if [[ -n "$program_args" ]]; then
+            cmd="$cmd $program_args"
+        fi
+
+        echo -e "${YELLOW}[$node]${NC} starting (connects to: $connections)"
+
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+            "${USERNAME}@${host}" "$cmd" \
+            >"$log_file" 2>&1 &
+
+        PIDS[$node]=$!
+    done
+
+    echo ""
+    echo -e "${GREEN}All nodes started. Waiting for completion...${NC}"
+    echo -e "${YELLOW}Press Ctrl+C to stop all nodes${NC}"
+    echo ""
+
+    failed=0
+    for node in "${!PIDS[@]}"; do
+        if wait "${PIDS[$node]}"; then
+            echo -e "${GREEN}[$node]${NC} completed"
+        else
+            echo -e "${RED}[$node]${NC} failed"
+            ((failed++))
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}=== Run Complete ===${NC}"
+    echo -e "Logs: ${BLUE}$LOG_DIR${NC}"
+
+    if [[ $failed -gt 0 ]]; then
+        echo -e "${RED}$failed node(s) failed${NC}"
+    fi
 }
 
 # Exec command
