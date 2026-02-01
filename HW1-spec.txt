@@ -1,0 +1,51 @@
+CSE 376/476 Assignment #1 (10 points)
+Spring 2026
+
+Introduction:
+
+
+Distributed Hash Table
+
+This programming assignment involves implementing a distributed hash table (DHT). The specification intentionally leaves many components and designs undefined. Work on your own design. Please document your decisions/attempts/success/failure. They will be the main topic of the grading process, along with looking at the performance evaluation of your DHT.
+
+The submission should be done through coursesite.lehigh.edu and should consist of:
+- the source code of your assignment;
+- a document containing the performance plots and the findings you consider worth sharing with me (if any).
+
+Unless notified otherwise, I will grade assignments during a one-on-one meeting with you.
+
+Good luck!
+
+========================
+Specification:
+
+- A DHT is a data structure that offers the same APIs as a conventional hashmap, meaning put(K,V) and get(K).
+-- The put(K,V) API is responsible for storing the value V associated with the key K. Put(K,V) returns true (i.e., adds V to the DHT) where there is no element already associated with K; otherwise returns false.
+-- The get(K) returns the value associated with the key K, if any; otherwise NULL.
+
+Other notes:
+- For simplicity, let us assume that keys can only be integer values (although if you use generics would be much better). Values should be generics.
+
+- Keys stored in the DHT are partitioned across different nodes. You can assume that the mapping between keys and partitions is known to the application (or can be computed locally).
+
+- No crash is assumed to happen during the application execution; therefore, fault-tolerance is not required.
+
+- The DHT should be easy to configure: during the initialization of the DHT, a property file should be available per process. This property file stores runtime settings (e.g., the IPs of other processes). Changes to these settings will not affect the current execution, but they are intended to configure the DHT when it boots.
+
+- Locks, or any other form of synchronization, should be needed to prevent concurrent accesses to the same key in the DHT, regardless of the type of operation. In other words, two or more operations (get or put) that request the same key should not proceed simultaneously, unless they are all reading. When a conflict happens, one operation successfully accesses the key, and the others should retry their requests until they succeed.
+
+- Since each process knows the composition of the distributed system, each process waits until all other processes are running, and then it starts executing operations after that. This is called a distributed barrier, and it can be implemented in many ways.
+
+- Deploy your DHT on at least three nodes. These nodes should be different servers in Sunlab.
+
+- To test your DHT, write a simple application that activates one thread and generates a configurable number of operations on the DHT (e.g., 100000). Each operation accesses a random key. You should have 20% of probability to execute a put operation and 80% of probability to execute a get operation. Note that on each deployed node, there should be one instance of the test application. If your system has three nodes, you should have three test applications running concurrently, each with three threads performing operations in parallel.
+
+- After one operation completes successfully, each application instance is expected to print on the output terminal the following four partial counters:
+-- the total number of successful put operations, meaning those that returned TRUE;
+-- the total number of non-successful put operations, meaning those that returned FALSE;
+-- the total number of get operations that returned a value different from NULL;
+-- the total number of get operations that returned a NULL value.
+
+- The test application should also collect performance metrics to be included in plots. Specifically, two metrics need to be collected: average throughput (i.e., the average number of operations per second across all processes) and average latency (i.e., the average time required by the system to complete one operation). At least two plots need to be delivered: one plot should have the system throughout on the y-axis, and one should have the average latency on the y-axis. Both of them have the range of keys as the x-axis. The ranges of keys to use are the following {10;100;1000;10000}.
+
+- Programming language is C++.
