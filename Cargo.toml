@@ -16,3 +16,4 @@ tokio = { version = "1.49.0", features = [
     "sync",
     "time",
 ] }
+tracing = "0.1.44"

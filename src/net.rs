@@ -7,6 +7,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
 };
+use tracing::{error, info};
 
 const DOMAIN: &str = "cse.lehigh.edu";
 const PORT: u64 = 1895;
@@ -44,7 +45,7 @@ async fn writer_task(
 ) {
     while let Some(msg) = outbox.recv().await {
         if let Err(e) = send_message(&mut write_half, &msg).await {
-            eprintln!("[{}] Write error: {}", peer_id, e);
+            error!("[{}] Write error: {}", peer_id, e);
             break;
         }
     }
@@ -63,7 +64,7 @@ async fn reader_task(
                 }
             }
             Err(e) => {
-                eprintln!("[{}] Read error: {}", peer_id, e);
+                error!("[{}] Read error: {}", peer_id, e);
                 break;
             }
         }
@@ -98,7 +99,7 @@ async fn recv_message<R: AsyncReadExt + Unpin>(stream: &mut R) -> Result<Message
 pub async fn connect_all(my_name: &str, sunlab_nodes: Vec<String>) -> Result<Peers> {
     let listen_addr = format!("0.0.0.0:{PORT}");
     let listener = TcpListener::bind(&listen_addr).await?;
-    println!("[{}] Listening on {}", my_name, listen_addr);
+    info!("[{}] Listening on {}", my_name, listen_addr);
 
     // Channel for completed connections (from both accept and connect paths)
     let (conn_sender, mut conn_receiver) = mpsc::channel::<(NodeId, TcpStream)>(16);
@@ -116,17 +117,17 @@ pub async fn connect_all(my_name: &str, sunlab_nodes: Vec<String>) -> Result<Pee
                     // Expect Hello message to identify peer
                     match recv_message(&mut stream).await {
                         Ok(Message::Hello { from }) => {
-                            println!(
+                            info!(
                                 "[{}] Accepted connection from {} ({})",
                                 my_name_owned, from, addr
                             );
                             let _ = accept_sender.send((from, stream)).await;
                         }
-                        Ok(_) => eprintln!("Expected Hello, got something else"),
-                        Err(e) => eprintln!("Failed to read Hello: {}", e),
+                        Ok(_) => error!("Expected Hello, got something else"),
+                        Err(e) => error!("Failed to read Hello: {}", e),
                     }
                 }
-                Err(e) => eprintln!("Accept failed: {}", e),
+                Err(e) => error!("Accept failed: {}", e),
             }
         }
     });
@@ -152,13 +153,13 @@ pub async fn connect_all(my_name: &str, sunlab_nodes: Vec<String>) -> Result<Pee
                     )
                     .await
                     {
-                        eprintln!("[{}] Failed to send Hello to {}: {}", my_name, peer_name, e);
+                        error!("[{}] Failed to send Hello to {}: {}", my_name, peer_name, e);
                         return;
                     }
-                    println!("[{}] Connected to {}", my_name, peer_name);
+                    info!("[{}] Connected to {}", my_name, peer_name);
                     let _ = sender.send((peer_name, stream)).await;
                 }
-                Err(e) => eprintln!("[{}] Failed to connect to {}: {}", my_name, peer_name, e),
+                Err(e) => error!("[{}] Failed to connect to {}: {}", my_name, peer_name, e),
             }
         });
     }
@@ -174,7 +175,7 @@ pub async fn connect_all(my_name: &str, sunlab_nodes: Vec<String>) -> Result<Pee
         }
     }
 
-    println!("[{}] All {} peers connected", my_name, streams.len());
+    info!("[{}] All {} peers connected", my_name, streams.len());
 
     // Now split each stream into reader/writer tasks with channels
     let (inbox_sender, inbox_receiver) = mpsc::channel::<(NodeId, Message)>(256);
@@ -218,7 +219,7 @@ async fn connect_with_retry(
                 if attempts >= max_attempts {
                     return Err(e.into());
                 }
-                eprintln!(
+                error!(
                     "Connection to {} failed (attempt {}), retrying...",
                     addr, attempts
                 );
