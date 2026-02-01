@@ -7,7 +7,6 @@ set -e
 # Configuration
 USERNAME="jod323"
 DOMAIN="cse.lehigh.edu"
-SESSION_NAME="sun"
 LOG_DIR="logs"
 
 # All known Sunlab nodes
@@ -52,12 +51,6 @@ Examples:
 Logs are saved to: logs/<node>.log
 
 Ctrl+C stops all nodes and cleans up.
-
-To view live output, attach to the screen session:
-  screen -r <session>    Attach to session
-  Ctrl-a d               Detach (return to main terminal)
-  Ctrl-a "               List all windows (shows node names)
-  Ctrl-a n/p             Next/previous window
 EOF
     exit 0
 }
@@ -135,7 +128,7 @@ select_nodes() {
     done
 }
 
-# Run screen session with commands on selected nodes
+# Run commands on selected nodes
 run_on_nodes() {
     local command="$1"
     shift
@@ -147,101 +140,78 @@ run_on_nodes() {
     # Save run metadata
     cat >"$LOG_DIR/run_info.txt" <<EOF
 Run started: $(date)
-Session: $SESSION_NAME
 Command: $command
 Nodes: ${nodes[*]}
 EOF
 
-    if ! command -v screen &>/dev/null; then
-        echo -e "${RED}Error: screen is not installed${NC}"
-        exit 1
-    fi
-
-    screen -S "$SESSION_NAME" -X quit 2>/dev/null || true
-
     echo ""
     echo -e "Logs: ${BLUE}$LOG_DIR${NC}"
-    echo -e "Session: ${BLUE}$SESSION_NAME${NC}"
-    echo ""
-    echo -e "${GREEN}Creating screen session...${NC}"
-
-    # Create initial screen session with first node
-    first_node="${nodes[0]}"
-    first_host="${first_node}.${DOMAIN}"
-    first_log="$LOG_DIR/${first_node}.log"
-    screen -dmS "$SESSION_NAME" -t "$first_node" bash -c "
-        echo '════════════════════════════════════════════════════════════════'
-        echo '  NODE: $first_node'
-        echo '  HOST: $first_host'
-        echo '  TIME: '\$(date)
-        echo '════════════════════════════════════════════════════════════════'
-        echo ''
-        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${USERNAME}@${first_host} '$command' 2>&1 | tee '$first_log'
-        echo ''
-        echo '════════════════════════════════════════════════════════════════'
-        echo '  Done. Log: $first_log'
-        echo '════════════════════════════════════════════════════════════════'
-    "
-
-    # Add windows for remaining nodes
-    for i in $(seq 1 $((${#nodes[@]} - 1))); do
-        node="${nodes[$i]}"
-        host="${node}.${DOMAIN}"
-        log_file="$LOG_DIR/${node}.log"
-        screen -S "$SESSION_NAME" -X screen -t "$node" bash -c "
-            echo '════════════════════════════════════════════════════════════════'
-            echo '  NODE: $node'
-            echo '  HOST: $host'
-            echo '  TIME: '\$(date)
-            echo '════════════════════════════════════════════════════════════════'
-            echo ''
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${USERNAME}@${host} '$command' 2>&1 | tee '$log_file'
-            echo ''
-            echo '════════════════════════════════════════════════════════════════'
-            echo '  Done. Log: $log_file'
-            echo '════════════════════════════════════════════════════════════════'
-        "
-    done
-
-    echo ""
-    echo -e "${GREEN}All nodes started in screen session.${NC}"
-    echo ""
-    echo -e "${YELLOW}Press Ctrl+C to stop all nodes${NC}"
-    echo -e "To view output: ${CYAN}screen -r $SESSION_NAME${NC}"
-    echo ""
-    echo -e "${YELLOW}Screen controls (after attaching):${NC}"
-    echo "  Ctrl-a \"     List all windows (shows node names)"
-    echo "  Ctrl-a n/p   Next/previous window"
-    echo "  Ctrl-a d     Detach (return here)"
     echo ""
 
-    # Store for cleanup
-    CLEANUP_NODES=("${nodes[@]}")
-    CLEANUP_SESSION="$SESSION_NAME"
-    CLEANUP_LOG_DIR="$LOG_DIR"
+    # Store PIDs for cleanup
+    declare -A PIDS
 
     cleanup() {
         echo ""
         echo -e "${RED}Caught interrupt, stopping all nodes...${NC}"
-        for node in "${CLEANUP_NODES[@]}"; do
-            local host="${node}.${DOMAIN}"
-            echo -ne "${YELLOW}[$node]${NC} "
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes \
-                "${USERNAME}@${host}" "pkill -f 'cargo run --release'" 2>/dev/null &&
-                echo -e "${GREEN}killed${NC}" || echo -e "${CYAN}no process${NC}"
+
+        # Kill local SSH processes
+        for node in "${!PIDS[@]}"; do
+            kill "${PIDS[$node]}" 2>/dev/null && echo -e "${YELLOW}[$node]${NC} stopped"
         done
-        screen -S "$CLEANUP_SESSION" -X quit 2>/dev/null || true
+
+        # Kill remote processes
+        for node in "${nodes[@]}"; do
+            local host="${node}.${DOMAIN}"
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes \
+                "${USERNAME}@${host}" "pkill -f 'cargo run --release'" 2>/dev/null
+        done
+
         echo ""
         echo -e "${GREEN}=== Cleanup Complete ===${NC}"
-        echo -e "Logs: ${BLUE}$CLEANUP_LOG_DIR${NC}"
-        ls -la "$CLEANUP_LOG_DIR"/*.log 2>/dev/null || echo "No logs found"
+        echo -e "Logs: ${BLUE}$LOG_DIR${NC}"
         exit 0
     }
 
     trap cleanup SIGINT SIGTERM
 
-    # Wait until Ctrl+C
-    while true; do sleep 1; done
+    # Start all nodes in background
+    for node in "${nodes[@]}"; do
+        local host="${node}.${DOMAIN}"
+        local log_file="$LOG_DIR/${node}.log"
+
+        echo -e "${YELLOW}[$node]${NC} starting..."
+
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+            "${USERNAME}@${host}" "$command" \
+            >"$log_file" 2>&1 &
+
+        PIDS[$node]=$!
+    done
+
+    echo ""
+    echo -e "${GREEN}All nodes started. Waiting for completion...${NC}"
+    echo -e "${YELLOW}Press Ctrl+C to stop all nodes${NC}"
+    echo ""
+
+    # Wait for all processes
+    failed=0
+    for node in "${!PIDS[@]}"; do
+        if wait "${PIDS[$node]}"; then
+            echo -e "${GREEN}[$node]${NC} completed"
+        else
+            echo -e "${RED}[$node]${NC} failed"
+            ((failed++))
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}=== Run Complete ===${NC}"
+    echo -e "Logs: ${BLUE}$LOG_DIR${NC}"
+
+    if [[ $failed -gt 0 ]]; then
+        echo -e "${RED}$failed node(s) failed${NC}"
+    fi
 }
 
 # Run command
