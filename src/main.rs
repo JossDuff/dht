@@ -1,3 +1,9 @@
+use clap::Parser;
+use dht::config::Config;
+
 fn main() {
-    println!("Hello, world!");
+    let config = Config::parse();
+
+    println!("I am {}", config.name);
+    println!("I will connect to {:?}", config.connections);
 }
