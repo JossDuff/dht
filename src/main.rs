@@ -1,12 +1,15 @@
+use anyhow::Result;
 use clap::Parser;
 use dht::{Config, Node};
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
     let config = Config::parse();
 
     println!("I am {}", config.name);
     println!("I will connect to {:?}", config.connections);
 
-    let node = Node::new(config);
-    node.run();
+    tokio::spawn(async move { Node::new(config) });
+
+    Ok(())
 }
