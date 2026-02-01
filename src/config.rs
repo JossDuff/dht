@@ -11,4 +11,8 @@ pub struct Config {
     /// Names of sunlab nodes to connect to
     #[arg(short, long, required = true, value_delimiter = ',')]
     pub connections: Vec<String>,
+
+    /// Maximum key value (for test harness)
+    #[arg(short, long, default_value = "9999")]
+    pub max_key: u64,
 }
