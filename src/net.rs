@@ -2,7 +2,11 @@ use super::Message;
 use super::NodeId;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -19,11 +23,14 @@ pub struct ReadyMessage(NodeId);
 pub struct Peers<K, V> {
     pub inbox: mpsc::Receiver<(NodeId, Message<K, V>)>,
     senders: HashMap<NodeId, mpsc::Sender<Message<K, V>>>,
+    // all the nodes in this cluster, in consistent ordering
+    cluster: Vec<NodeId>,
+    pub my_node_id: NodeId,
 }
 
 impl<K, V> Peers<K, V>
 where
-    K: Send + Sync + 'static,
+    K: Send + Sync + 'static + Hash,
     V: Send + Sync + 'static,
 {
     // send message to single node
@@ -34,6 +41,14 @@ where
             .ok_or_else(|| anyhow!("unknown peer: {}", to))?;
         sender.send(msg).await?;
         Ok(())
+    }
+
+    // maps the key to the sunlab node who stores the value
+    pub fn get_key_owner(&self, key: &K) -> &NodeId {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let cluster_index = (hasher.finish() as usize) % self.cluster.len();
+        &self.cluster[cluster_index]
     }
 }
 
@@ -145,19 +160,22 @@ where
         }
     });
 
+    let my_name = my_name.to_string();
+    let my_id = node_to_index(&my_name).ok_or(anyhow!(
+        "This has an invalid sunlab machine name: {}",
+        my_name
+    ))?;
+    let my_node_id = NodeId {
+        sunlab_name: my_name.clone(),
+        id: my_id,
+    };
+
     // Spawn connect tasks for each peer
     for peer_name in &sunlab_nodes {
         let peer_name = peer_name.clone();
-        let my_name = my_name.to_string();
-        let my_id = node_to_index(&my_name).ok_or(anyhow!(
-            "This has an invalid sunlab machine name: {}",
-            my_name
-        ))?;
-        let my_node_id = NodeId {
-            sunlab_name: my_name.clone(),
-            id: my_id,
-        };
         let sender = conn_sender.clone();
+        let my_node_id = my_node_id.clone();
+        let my_name = my_name.clone();
 
         tokio::spawn(async move {
             match connect_with_retry(&peer_name, 5, Duration::from_secs(1)).await {
@@ -195,6 +213,12 @@ where
     // Now split each stream into reader/writer tasks with channels
     let (inbox_sender, inbox_receiver) = mpsc::channel::<(NodeId, Message<K, V>)>(256);
     let mut senders = HashMap::new();
+    // list of all nodes in the cluster
+    let mut cluster: Vec<NodeId> = streams.iter().map(|(x, _)| x.clone()).collect();
+    // include this node
+    cluster.push(my_node_id.clone());
+    // sort by id
+    cluster.sort_by_key(|x| x.id);
 
     for (peer_id, stream) in streams {
         let (read_half, write_half) = stream.into_split();
@@ -215,6 +239,8 @@ where
     Ok(Peers {
         inbox: inbox_receiver,
         senders,
+        cluster,
+        my_node_id,
     })
 }
 

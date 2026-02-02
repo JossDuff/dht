@@ -6,11 +6,12 @@ pub use config::Config;
 use net::{connect_all, Peers};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap},
     fmt::{self, Debug},
+    hash::{Hash, Hasher},
 };
-use tokio::sync::oneshot;
-use tracing::{info, warn};
+use tokio::sync::{oneshot, Mutex};
+use tracing::{debug, info, warn};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
 pub struct NodeId {
@@ -31,10 +32,18 @@ pub struct Node<K, V> {
 
 impl<K, V> Node<K, V>
 where
-    K: Send + Sync + 'static + Debug + Serialize + for<'de> Deserialize<'de>,
-    V: Send + Sync + 'static + Debug + Serialize + for<'de> Deserialize<'de>,
+    K: Send
+        + Sync
+        + 'static
+        + Debug
+        + Serialize
+        + for<'de> Deserialize<'de>
+        + Hash
+        + Eq
+        + PartialEq,
+    V: Send + Sync + 'static + Debug + Serialize + for<'de> Deserialize<'de> + Clone,
 {
-    pub async fn new(config: Config, ready_sender: oneshot::Sender<bool>) -> Result<()> {
+    pub async fn new_old(config: Config, ready_sender: oneshot::Sender<bool>) -> Result<()> {
         // connect to all other nodes, then send ready check
         //let connections = make_connections(self.config);
         info!("I'm running!");
@@ -46,7 +55,7 @@ where
             .map_err(|_| anyhow!("The receiver for the test harness ready check dropped"))?;
 
         // Key value store kept at this node
-        let db: HashMap<K, V> = HashMap::new();
+        let mut db: HashMap<K, V> = HashMap::new();
 
         // main event loop to respond to peers
         loop {
@@ -55,12 +64,40 @@ where
                     info!("Got {:?} from {}", msg, from);
                     match msg {
                         Message::Get { key, req_id } => {
-                            todo!()
-                        }
-                        Message::GetResponse { val, req_id } => {
-                            todo!()
+                            // let owner_node = peers.get_key_owner(&key);
+                            // // if the key is on this machine
+                            // if owner_node == &peers.my_node_id {
+                            //     todo!();
+                            // }
+                            let result = db.get(&key).map(|v| v.clone());
+                            let resp: Message<K, V> = Message::GetResponse {
+                                val: result,
+                                req_id,
+                            };
+                            peers.send(&from, resp).await.map_err(|e| {
+                                anyhow!("Error sending GetResponse to node {}: {}", from, e)
+                            })?;
+                            debug!(
+                                "Sent GetResponse to {} for key {:?} req_id {}",
+                                from, key, req_id
+                            );
                         }
                         Message::Put { key, val, req_id } => {
+                            let result = db.insert(key, val);
+                            //let result = db.get(&key).map(|v| v.clone());
+                            let resp: Message<K, V> = Message::GetResponse {
+                                val: result,
+                                req_id,
+                            };
+                            peers.send(&from, resp).await.map_err(|e| {
+                                anyhow!("Error sending GetResponse to node {}: {}", from, e)
+                            })?;
+                            debug!(
+                                "Sent PutResponse to {} for key {:?} req_id {}",
+                                from, key, req_id
+                            );
+                        }
+                        Message::GetResponse { val, req_id } => {
                             todo!()
                         }
                         Message::PutResponse { success, req_id } => {
