@@ -50,7 +50,9 @@ where
         + for<'de> Deserialize<'de>
         + Hash
         + Eq
-        + PartialEq,
+        + PartialEq
+        + Clone
+        + Copy,
     V: Send + Sync + 'static + Debug + Serialize + for<'de> Deserialize<'de> + Clone,
 {
     pub async fn new(config: Config) -> Result<(Self, mpsc::Sender<LocalMessage<K, V>>)> {
@@ -84,7 +86,7 @@ where
 
     pub async fn run(&self) -> Result<()> {
         // TODO: event loop for local messages
-        // main event loop to respond to peers
+        // event loop to respond to peers
         Ok(())
     }
 
@@ -111,7 +113,7 @@ where
                             let _ = self.peers.send(key_owner, request).await?;
 
                             // create a task awaiting the response from a peer
-                            let awaiting_get_response = self.awaiting_get_response.lock().await;
+                            let mut awaiting_get_response = self.awaiting_get_response.lock().await;
                             let (get_sender, get_receiver) = oneshot::channel();
                             awaiting_get_response.insert(req_id, get_sender);
 
@@ -149,7 +151,7 @@ where
                             let _ = self.peers.send(key_owner, request).await?;
 
                             // create a task awaiting the response from a peer
-                            let awaiting_put_response = self.awaiting_put_response.lock().await;
+                            let mut awaiting_put_response = self.awaiting_put_response.lock().await;
                             let (put_sender, put_receiver) = oneshot::channel();
                             awaiting_put_response.insert(req_id, put_sender);
 
@@ -180,7 +182,7 @@ where
     }
 
     // handles messages from the network
-    async fn run_network_loop(&self) -> Result<()> {
+    async fn run_network_loop(&mut self) -> Result<()> {
         loop {
             match self.peers.inbox.recv().await {
                 Some((from, msg)) => {
@@ -188,9 +190,9 @@ where
                     match msg {
                         // peer is asking us for a get request
                         PeerMessage::Get { key, req_id } => {
-                            let result = self.local_get(key).await;
+                            let result = self.local_get(&key).await;
                             let resp: PeerMessage<K, V> = PeerMessage::GetResponse {
-                                key: *key,
+                                key: key.clone(),
                                 val: result,
                                 req_id,
                             };
@@ -206,9 +208,9 @@ where
                         }
                         // peer is asking us for a put request
                         PeerMessage::Put { key, val, req_id } => {
-                            let result = self.local_insert(*key, val).await;
+                            let result = self.local_insert(key.clone(), val).await;
                             let resp: PeerMessage<K, V> = PeerMessage::PutResponse {
-                                key: *key,
+                                key,
                                 success: result,
                                 req_id,
                             };
@@ -225,11 +227,11 @@ where
                         // received a response from a peer about a previous get request
                         PeerMessage::GetResponse { key, val, req_id } => {
                             // look up the channel for sending the response
-                            let awaiting_get_response = self.awaiting_get_response.lock().await;
-                            match awaiting_get_response.get(&req_id) {
+                            let mut awaiting_get_response = self.awaiting_get_response.lock().await;
+                            match awaiting_get_response.remove(&req_id) {
                                 Some(sender) => {
                                     // send the response to the local task awaiting it
-                                    sender.send(val).map_err(|e| {
+                                    sender.send(val).map_err(|_| {
                                         anyhow!(
                                             "Error sending local GetResponse for request {}",
                                             req_id
@@ -248,11 +250,11 @@ where
                             req_id,
                         } => {
                             // look up the channel for sending the response
-                            let awaiting_put_response = self.awaiting_put_response.lock().await;
-                            match awaiting_put_response.get(&req_id) {
+                            let mut awaiting_put_response = self.awaiting_put_response.lock().await;
+                            match awaiting_put_response.remove(&req_id) {
                                 Some(sender) => {
                                     // send the response for the local task awaiting it
-                                    sender.send(success).map_err(|e| {
+                                    sender.send(success).map_err(|_| {
                                         anyhow!(
                                             "Error sending local PutResponse for request {}",
                                             req_id

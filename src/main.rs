@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
 
     let (sender, receiver) = oneshot::channel();
     // runs in background
-    let handle = tokio::spawn(async move { Node::<u64, u64>::new(config, sender).await });
+    let handle = tokio::spawn(async move { Node::<u64, u64>::new(config).await });
 
     // wait until the node is ready
     receiver.await?;

@@ -1,5 +1,5 @@
-use super::Message;
 use super::NodeId;
+use super::PeerMessage;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,11 +18,11 @@ const DOMAIN: &str = "cse.lehigh.edu";
 const PORT: u64 = 1895;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ReadyMessage(NodeId);
+pub struct ReadyPeerMessage(NodeId);
 
 pub struct Peers<K, V> {
-    pub inbox: mpsc::Receiver<(NodeId, Message<K, V>)>,
-    senders: HashMap<NodeId, mpsc::Sender<Message<K, V>>>,
+    pub inbox: mpsc::Receiver<(NodeId, PeerMessage<K, V>)>,
+    pub senders: HashMap<NodeId, mpsc::Sender<PeerMessage<K, V>>>,
 }
 
 impl<K, V> Peers<K, V>
@@ -31,7 +31,7 @@ where
     V: Send + Sync + 'static,
 {
     // send message to single node
-    pub async fn send(&self, to: &NodeId, msg: Message<K, V>) -> Result<()> {
+    pub async fn send(&self, to: &NodeId, msg: PeerMessage<K, V>) -> Result<()> {
         let sender = self
             .senders
             .get(to)
@@ -44,7 +44,7 @@ where
 async fn writer_task<K, V>(
     peer_id: NodeId,
     mut write_half: tokio::net::tcp::OwnedWriteHalf,
-    mut outbox: mpsc::Receiver<Message<K, V>>,
+    mut outbox: mpsc::Receiver<PeerMessage<K, V>>,
 ) where
     K: Serialize + for<'de> Deserialize<'de>,
     V: Serialize + for<'de> Deserialize<'de>,
@@ -60,7 +60,7 @@ async fn writer_task<K, V>(
 async fn reader_task<K, V>(
     peer_id: NodeId,
     mut read_half: tokio::net::tcp::OwnedReadHalf,
-    inbox: mpsc::Sender<(NodeId, Message<K, V>)>,
+    inbox: mpsc::Sender<(NodeId, PeerMessage<K, V>)>,
 ) where
     K: Serialize + for<'de> Deserialize<'de>,
     V: Serialize + for<'de> Deserialize<'de>,
@@ -137,7 +137,7 @@ where
 
                     // Expect Ready message to identify peer
                     match recv_msg(&mut stream).await {
-                        Ok(ReadyMessage(from)) => {
+                        Ok(ReadyPeerMessage(from)) => {
                             info!(
                                 "[{}] Accepted connection from {} ({})",
                                 my_name_owned, from, addr
@@ -176,7 +176,9 @@ where
                     //let _ = stream.set_nodelay(true);
 
                     // Identify ourselves
-                    if let Err(e) = send_msg(&mut stream, &ReadyMessage(my_node_id.clone())).await {
+                    if let Err(e) =
+                        send_msg(&mut stream, &ReadyPeerMessage(my_node_id.clone())).await
+                    {
                         error!("[{}] Failed to send Ready to {}: {}", my_name, peer_name, e);
                         return;
                     }
@@ -203,7 +205,7 @@ where
     info!("[{}] All {} peers connected", my_name, streams.len());
 
     // Now split each stream into reader/writer tasks with channels
-    let (inbox_sender, inbox_receiver) = mpsc::channel::<(NodeId, Message<K, V>)>(256);
+    let (inbox_sender, inbox_receiver) = mpsc::channel::<(NodeId, PeerMessage<K, V>)>(256);
     let mut senders = HashMap::new();
     // list of all nodes in the cluster
     let mut cluster: Vec<NodeId> = streams.iter().map(|(x, _)| x.clone()).collect();
@@ -214,7 +216,7 @@ where
 
     for (peer_id, stream) in streams {
         let (read_half, write_half) = stream.into_split();
-        let (outbox_sender, outbox_receiver) = mpsc::channel::<Message<K, V>>(64);
+        let (outbox_sender, outbox_receiver) = mpsc::channel::<PeerMessage<K, V>>(64);
 
         // Reader task: recv from socket -> inbox
         let inbox_sender = inbox_sender.clone();
