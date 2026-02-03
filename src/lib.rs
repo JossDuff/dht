@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
 pub struct NodeId {
@@ -36,8 +36,8 @@ pub struct Node<K, V: Clone> {
     local_inbox: mpsc::Receiver<LocalMessage<K, V>>,
     db: Arc<Mutex<HashMap<K, V>>>,
     // TODO: use RwLock
-    peer_response_senders: Arc<Mutex<HashMap<u64, oneshot::Sender<LocalMessage<K, V>>>>>,
-    local_response_receivers: Arc<Mutex<HashMap<u64, oneshot::Receiver<LocalMessage<K, V>>>>>,
+    awaiting_put_response: Arc<Mutex<HashMap<u64, oneshot::Sender<bool>>>>,
+    awaiting_get_response: Arc<Mutex<HashMap<u64, oneshot::Sender<Option<V>>>>>,
 }
 
 impl<K, V> Node<K, V>
@@ -55,8 +55,10 @@ where
 {
     pub async fn new(config: Config) -> Result<(Self, mpsc::Sender<LocalMessage<K, V>>)> {
         let db = Arc::new(Mutex::new(HashMap::new()));
-        let peer_response_senders = Arc::new(Mutex::new(HashMap::new()));
-        let local_response_receivers = Arc::new(Mutex::new(HashMap::new()));
+        let awaiting_put_response: Arc<Mutex<HashMap<u64, oneshot::Sender<bool>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let awaiting_get_response: Arc<Mutex<HashMap<u64, oneshot::Sender<Option<V>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // this is a barrier
         let (peers, cluster, my_node_id): (Peers<K, V>, Vec<NodeId>, NodeId) =
@@ -72,8 +74,8 @@ where
                 cluster,
                 my_node_id,
                 local_inbox,
-                peer_response_senders,
-                local_response_receivers,
+                awaiting_get_response,
+                awaiting_put_response,
                 db,
             },
             local_sender,
@@ -96,7 +98,7 @@ where
                         response_sender,
                     } => {
                         let key_owner = self.get_key_owner(&key);
-                        // key is locally owned
+                        // key is locally owned, immedietly respond
                         if *key_owner == self.my_node_id {
                             let resp = self.local_get(&key).await;
                             response_sender.send(resp).map_err(|_| {
@@ -108,10 +110,24 @@ where
                             let request: PeerMessage<K, V> = PeerMessage::Get { key, req_id };
                             let _ = self.peers.send(key_owner, request).await?;
 
-                            let peer_response_senders = self.peer_response_senders.lock().await;
-                            peer_response_senders.insert(req_id, response_sender);
+                            // create a task awaiting the response from a peer
+                            let awaiting_get_response = self.awaiting_get_response.lock().await;
+                            let (get_sender, get_receiver) = oneshot::channel();
+                            awaiting_get_response.insert(req_id, get_sender);
 
-                            //request_responses: Arc<Mutex<HashMap<u64, oneshot::Sender<LocalMessage<K, V>>>>>,
+                            // start a non-blocking task that awaits this response and sends back to test
+                            // harness
+                            tokio::spawn(async move {
+                                match get_receiver.await {
+                                    Ok(peer_get_response) => {
+                                        // send get response back to test harness
+                                        response_sender.send(peer_get_response);
+                                    }
+                                    Err(e) => {
+                                        error!("Receive error waiting for getResponse: {}", e);
+                                    }
+                                }
+                            });
                         }
                     }
                     LocalMessage::Put {
@@ -119,14 +135,38 @@ where
                         val,
                         response_sender,
                     } => {
-                        todo!()
-                    }
-                    // handle a getResponse from a peer
-                    LocalMessage::GetResponse { key, val } => {
-                        todo!()
-                    }
-                    LocalMessage::PutResponse { key, success } => {
-                        todo!()
+                        let key_owner = self.get_key_owner(&key);
+                        // key is locally owned, immedietly respond
+                        if *key_owner == self.my_node_id {
+                            let resp = self.local_insert(key, val).await;
+                            response_sender.send(resp).map_err(|_| {
+                                anyhow!("Receiver for local put on key {:?} dropped", key)
+                            })?;
+                        } else {
+                            // we need to request the key's owner
+                            let req_id: u64 = rand::thread_rng().gen();
+                            let request: PeerMessage<K, V> = PeerMessage::Put { key, req_id, val };
+                            let _ = self.peers.send(key_owner, request).await?;
+
+                            // create a task awaiting the response from a peer
+                            let awaiting_put_response = self.awaiting_put_response.lock().await;
+                            let (put_sender, put_receiver) = oneshot::channel();
+                            awaiting_put_response.insert(req_id, put_sender);
+
+                            // start a non-blocking task that awaits this response and sends back to test
+                            // harness
+                            tokio::spawn(async move {
+                                match put_receiver.await {
+                                    Ok(peer_put_response) => {
+                                        // send get response back to test harness
+                                        response_sender.send(peer_put_response);
+                                    }
+                                    Err(e) => {
+                                        error!("Receive error waiting for putResponse: {}", e);
+                                    }
+                                }
+                            });
+                        }
                     }
                 },
                 None => {
@@ -146,6 +186,7 @@ where
                 Some((from, msg)) => {
                     info!("Got {:?} from {}", msg, from);
                     match msg {
+                        // peer is asking us for a get request
                         PeerMessage::Get { key, req_id } => {
                             let result = self.local_get(key).await;
                             let resp: PeerMessage<K, V> = PeerMessage::GetResponse {
@@ -163,6 +204,7 @@ where
                                 from, key, req_id
                             );
                         }
+                        // peer is asking us for a put request
                         PeerMessage::Put { key, val, req_id } => {
                             let result = self.local_insert(*key, val).await;
                             let resp: PeerMessage<K, V> = PeerMessage::PutResponse {
@@ -183,22 +225,16 @@ where
                         // received a response from a peer about a previous get request
                         PeerMessage::GetResponse { key, val, req_id } => {
                             // look up the channel for sending the response
-                            let req_resp = self.request_responses.lock().await;
-                            match req_resp.get(&req_id) {
+                            let awaiting_get_response = self.awaiting_get_response.lock().await;
+                            match awaiting_get_response.get(&req_id) {
                                 Some(sender) => {
-                                    sender
-                                        .send(LocalMessage::GetResponse {
-                                            req_id,
-                                            key: *key,
-                                            val,
-                                        })
-                                        .await
-                                        .map_err(|e| {
-                                            anyhow!(
-                                                "Error sending local GetResponse for request {}",
-                                                req_id
-                                            )
-                                        })?;
+                                    // send the response to the local task awaiting it
+                                    sender.send(val).map_err(|e| {
+                                        anyhow!(
+                                            "Error sending local GetResponse for request {}",
+                                            req_id
+                                        )
+                                    })?;
                                 }
                                 None => {
                                     return Err(anyhow!("Receiver for req_id {} dropped", req_id));
@@ -212,22 +248,16 @@ where
                             req_id,
                         } => {
                             // look up the channel for sending the response
-                            let req_resp = self.request_responses.lock().await;
-                            match req_resp.get(&req_id) {
+                            let awaiting_put_response = self.awaiting_put_response.lock().await;
+                            match awaiting_put_response.get(&req_id) {
                                 Some(sender) => {
-                                    sender
-                                        .send(LocalMessage::PutResponse {
-                                            req_id,
-                                            key: *key,
-                                            success,
-                                        })
-                                        .await
-                                        .map_err(|e| {
-                                            anyhow!(
-                                                "Error sending local PutResponse for request {}",
-                                                req_id
-                                            )
-                                        })?;
+                                    // send the response for the local task awaiting it
+                                    sender.send(success).map_err(|e| {
+                                        anyhow!(
+                                            "Error sending local PutResponse for request {}",
+                                            req_id
+                                        )
+                                    })?;
                                 }
                                 None => {
                                     return Err(anyhow!("Receiver for req_id {} dropped", req_id));
@@ -281,7 +311,9 @@ pub enum PeerMessage<K, V> {
     PutResponse { key: K, success: bool, req_id: u64 },
 }
 
-#[derive(Clone, Debug)]
+pub struct GetResponse<V>(Option<V>);
+
+#[derive(Debug)]
 pub enum LocalMessage<K, V: Clone> {
     Get {
         key: K,
@@ -291,15 +323,5 @@ pub enum LocalMessage<K, V: Clone> {
         key: K,
         val: V,
         response_sender: oneshot::Sender<bool>,
-    },
-    GetResponse {
-        req_id: u64,
-        key: K,
-        val: Option<V>,
-    },
-    PutResponse {
-        req_id: u64,
-        key: K,
-        success: bool,
     },
 }
