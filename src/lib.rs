@@ -10,10 +10,31 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, error, info, warn};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PeerMessage<K, V> {
+    Get { key: K, req_id: u64 },
+    GetResponse { val: Option<V>, req_id: u64 },
+    Put { key: K, val: V, req_id: u64 },
+    PutResponse { success: bool, req_id: u64 },
+}
+
+#[derive(Debug)]
+pub enum LocalMessage<K, V: Clone> {
+    Get {
+        key: K,
+        response_sender: oneshot::Sender<Option<V>>,
+    },
+    Put {
+        key: K,
+        val: V,
+        response_sender: oneshot::Sender<bool>,
+    },
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
 pub struct NodeId {
@@ -28,7 +49,6 @@ impl fmt::Display for NodeId {
 }
 
 pub struct Node<K, V: Clone> {
-    config: Config,
     peers: Peers<K, V>,
     // all the nodes in this cluster, in consistent ordering
     cluster: Vec<NodeId>,
@@ -70,7 +90,6 @@ where
 
         Ok((
             Self {
-                config,
                 peers,
                 cluster,
                 my_node_id,
@@ -288,27 +307,4 @@ where
         let cluster_index = (hasher.finish() as usize) % self.cluster.len();
         &self.cluster[cluster_index]
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum PeerMessage<K, V> {
-    Get { key: K, req_id: u64 },
-    GetResponse { val: Option<V>, req_id: u64 },
-    Put { key: K, val: V, req_id: u64 },
-    PutResponse { success: bool, req_id: u64 },
-}
-
-pub struct GetResponse<V>(Option<V>);
-
-#[derive(Debug)]
-pub enum LocalMessage<K, V: Clone> {
-    Get {
-        key: K,
-        response_sender: oneshot::Sender<Option<V>>,
-    },
-    Put {
-        key: K,
-        val: V,
-        response_sender: oneshot::Sender<bool>,
-    },
 }

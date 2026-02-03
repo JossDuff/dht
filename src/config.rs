@@ -12,7 +12,7 @@ pub struct Config {
     #[arg(short, long, required = true, value_delimiter = ',')]
     pub connections: Vec<String>,
 
-    /// Maximum key value (for test harness)
-    #[arg(short, long, default_value = "9999")]
-    pub max_key: u64,
+    /// Number of keys to test on
+    #[arg(short, long, default_value = "1000000")]
+    pub num_keys: u64,
 }
