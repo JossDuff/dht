@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use dht::{Config, LocalMessage, Node};
 use rand::Rng;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::mpsc};
 use tokio::sync::oneshot;
 use tracing::{error, info};
@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
     for data in test_data {
         let sender = sender.clone();
         handles.push(tokio::spawn(async move {
+            let req_start = Instant::now();
             match data.operation {
                 Operation::Get => {
                     let (response_sender, response_receiver) = oneshot::channel();
@@ -57,12 +58,14 @@ async fn main() -> Result<()> {
                     response_receiver.await.unwrap();
                 }
             }
+            req_start.elapsed()
         }));
     }
 
     // Wait for all to complete
+    let mut latencies: Vec<Duration> = Vec::with_capacity(handles.len());
     for handle in handles {
-        handle.await?;
+        latencies.push(handle.await?);
     }
 
     let elapsed = start.elapsed();
@@ -71,6 +74,11 @@ async fn main() -> Result<()> {
         "Throughput: {:.2} ops/sec",
         num_keys as f64 / elapsed.as_secs_f64()
     );
+    latencies.sort();
+    let p50 = latencies[latencies.len() / 2];
+    let p99 = latencies[latencies.len() * 99 / 100];
+    let avg = latencies.iter().sum::<Duration>() / latencies.len() as u32;
+    info!("Latency avg: {:?}, p50: {:?}, p99: {:?}", avg, p50, p99);
 
     // wait until the node is ready
     info!("Starting test.");
