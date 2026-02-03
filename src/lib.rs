@@ -35,7 +35,6 @@ pub struct Node<K, V: Clone> {
     my_node_id: NodeId,
     local_inbox: mpsc::Receiver<LocalMessage<K, V>>,
     db: Arc<Mutex<HashMap<K, V>>>,
-    // TODO: use RwLock
     awaiting_put_response: Arc<Mutex<HashMap<u64, oneshot::Sender<bool>>>>,
     awaiting_get_response: Arc<Mutex<HashMap<u64, oneshot::Sender<Option<V>>>>>,
 }
@@ -86,6 +85,7 @@ where
 
     pub async fn run(&mut self) -> Result<()> {
         loop {
+            // using tokio select because we expect to be io bound, not cpu bound
             tokio::select! {
                 Some(local_msg) = self.local_inbox.recv() => {
                     self.handle_local_message(local_msg).await?;
@@ -193,7 +193,6 @@ where
             PeerMessage::Get { key, req_id } => {
                 let result = self.local_get(&key).await;
                 let resp: PeerMessage<K, V> = PeerMessage::GetResponse {
-                    key: key.clone(),
                     val: result,
                     req_id,
                 };
@@ -212,7 +211,6 @@ where
             PeerMessage::Put { key, val, req_id } => {
                 let result = self.local_insert(key.clone(), val).await;
                 let resp: PeerMessage<K, V> = PeerMessage::PutResponse {
-                    key,
                     success: result,
                     req_id,
                 };
@@ -228,7 +226,7 @@ where
                 );
             }
             // received a response from a peer about a previous get request
-            PeerMessage::GetResponse { key, val, req_id } => {
+            PeerMessage::GetResponse { val, req_id } => {
                 // look up the channel for sending the response
                 let mut awaiting_get_response = self.awaiting_get_response.lock().await;
                 match awaiting_get_response.remove(&req_id) {
@@ -244,11 +242,7 @@ where
                 };
             }
             // received a response from a peer about a previous put request
-            PeerMessage::PutResponse {
-                key,
-                success,
-                req_id,
-            } => {
+            PeerMessage::PutResponse { success, req_id } => {
                 // look up the channel for sending the response
                 let mut awaiting_put_response = self.awaiting_put_response.lock().await;
                 match awaiting_put_response.remove(&req_id) {
@@ -299,9 +293,9 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum PeerMessage<K, V> {
     Get { key: K, req_id: u64 },
-    GetResponse { key: K, val: Option<V>, req_id: u64 },
+    GetResponse { val: Option<V>, req_id: u64 },
     Put { key: K, val: V, req_id: u64 },
-    PutResponse { key: K, success: bool, req_id: u64 },
+    PutResponse { success: bool, req_id: u64 },
 }
 
 pub struct GetResponse<V>(Option<V>);
