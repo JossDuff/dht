@@ -38,12 +38,14 @@ Commands:
 
 Options:
   -n <num>      Number of nodes to use (required for 'run' and 'exec')
+  -k <num>      Number of keys for benchmark (passed to dht)
   -d <dir>      Project directory (default: current directory)
   -h, --help    Show this help
 
 Examples:
   sun list
   sun run -n 3
+  sun run -n 3 -k 100000
   sun run -n 3 -- --keys 1000 --ops 50000
   sun run -n 5 -d ~/dev/cse476/project -- --config config.toml
   sun exec -n 3 -- hostname
@@ -261,7 +263,8 @@ EOF
 cmd_run() {
     local num_nodes="$1"
     local project_dir="$2"
-    shift 2
+    local num_keys="$3"
+    shift 3
     local program_args="$*"
 
     echo -e "${GREEN}=== Running on Cluster ===${NC}"
@@ -271,6 +274,9 @@ cmd_run() {
 
     echo ""
     echo -e "Directory: ${BLUE}$project_dir${NC}"
+    if [[ -n "$num_keys" ]]; then
+        echo -e "Num keys: ${BLUE}$num_keys${NC}"
+    fi
     if [[ -n "$program_args" ]]; then
         echo -e "Extra args: ${BLUE}$program_args${NC}"
     fi
@@ -313,6 +319,9 @@ cmd_run() {
         connections=$(get_connections "$node" "${nodes[@]}")
 
         local cmd="$project_dir/target/release/dht --name $node --connections $connections"
+        if [[ -n "$num_keys" ]]; then
+            cmd="$cmd --num-keys $num_keys"
+        fi
         if [[ -n "$program_args" ]]; then
             cmd="$cmd $program_args"
         fi
@@ -385,12 +394,17 @@ shift
 
 NUM_NODES=""
 PROJECT_DIR="$(pwd)"
+NUM_KEYS=""
 EXTRA_ARGS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
     -n)
         NUM_NODES="$2"
+        shift 2
+        ;;
+    -k)
+        NUM_KEYS="$2"
         shift 2
         ;;
     -d)
@@ -426,7 +440,7 @@ run)
         echo -e "${RED}Error: Number of nodes must be a positive integer${NC}"
         exit 1
     fi
-    cmd_run "$NUM_NODES" "$PROJECT_DIR" $EXTRA_ARGS
+    cmd_run "$NUM_NODES" "$PROJECT_DIR" "$NUM_KEYS" $EXTRA_ARGS
     ;;
 exec)
     if [[ -z "$NUM_NODES" ]]; then
