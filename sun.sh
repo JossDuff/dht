@@ -8,7 +8,8 @@ set -e
 USERNAME="jod323"
 DOMAIN="cse.lehigh.edu"
 LOG_DIR="logs"
-TARGET_DIR="${CARGO_TARGET_DIR:-$PROJECT_DIR/target}"
+# scratch is a larger partition on sunlab that resides per-machine
+TARGET_DIR="/scratch/.cargo/${USERNAME}/target"
 
 # All known Sunlab nodes
 ALL_NODES=(
@@ -271,6 +272,11 @@ cmd_run() {
     echo -e "${GREEN}=== Running on Cluster ===${NC}"
     echo ""
 
+    echo -e "${CYAN}Building project to populate cargo cache...${NC}"
+    (cd "$project_dir" && cargo build --release --quiet)
+    echo -e "${GREEN}Build complete${NC}"
+    echo ""
+
     mapfile -t nodes < <(select_nodes "$num_nodes")
 
     echo ""
@@ -319,7 +325,7 @@ cmd_run() {
         local connections
         connections=$(get_connections "$node" "${nodes[@]}")
 
-        local cmd="cd $project_dir && cargo build --release --quiet && $TARGET_DIR/release/dht --name $node --connections $connections"
+        local cmd="cd $project_dir && cargo build --release --quiet --target-dir $TARGET_DIR && $TARGET_DIR/release/dht --name $node --connections $connections"
         if [[ -n "$num_keys" ]]; then
             cmd="$cmd --num-keys $num_keys"
         fi
