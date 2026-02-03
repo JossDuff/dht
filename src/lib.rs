@@ -9,6 +9,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
+    sync::Arc,
 };
 use tokio::sync::{oneshot, Mutex};
 use tracing::{debug, info, warn};
@@ -28,6 +29,10 @@ impl fmt::Display for NodeId {
 pub struct Node<K, V> {
     config: Config,
     peers: Peers<K, V>,
+    // all the nodes in this cluster, in consistent ordering
+    cluster: Vec<NodeId>,
+    my_node_id: NodeId,
+    db: Arc<Mutex<HashMap<K, V>>>,
 }
 
 impl<K, V> Node<K, V>
@@ -43,23 +48,24 @@ where
         + PartialEq,
     V: Send + Sync + 'static + Debug + Serialize + for<'de> Deserialize<'de> + Clone,
 {
-    pub async fn new_old(config: Config, ready_sender: oneshot::Sender<bool>) -> Result<()> {
-        // connect to all other nodes, then send ready check
-        //let connections = make_connections(self.config);
-        info!("I'm running!");
-        let mut peers: Peers<K, V> = connect_all(&config.name, config.connections).await?;
+    pub async fn new(config: Config) -> Result<Self> {
+        let db = Arc::new(Mutex::new(HashMap::new()));
+        let (peers, cluster, my_node_id): (Peers<K, V>, Vec<NodeId>, NodeId) =
+            connect_all(&config.name, &config.connections).await?;
 
-        // tell the test harness we're ready
-        let _ = ready_sender
-            .send(true)
-            .map_err(|_| anyhow!("The receiver for the test harness ready check dropped"))?;
+        Ok(Self {
+            config,
+            peers,
+            cluster,
+            my_node_id,
+            db,
+        })
+    }
 
-        // Key value store kept at this node
-        let mut db: HashMap<K, V> = HashMap::new();
-
+    pub async fn run(&mut self) -> Result<()> {
         // main event loop to respond to peers
         loop {
-            match peers.inbox.recv().await {
+            match self.peers.inbox.recv().await {
                 Some((from, msg)) => {
                     info!("Got {:?} from {}", msg, from);
                     match msg {
@@ -69,12 +75,12 @@ where
                             // if owner_node == &peers.my_node_id {
                             //     todo!();
                             // }
-                            let result = db.get(&key).map(|v| v.clone());
+                            let result = self.db.get(&key).map(|v| v.clone());
                             let resp: Message<K, V> = Message::GetResponse {
                                 val: result,
                                 req_id,
                             };
-                            peers.send(&from, resp).await.map_err(|e| {
+                            self.peers.send(&from, resp).await.map_err(|e| {
                                 anyhow!("Error sending GetResponse to node {}: {}", from, e)
                             })?;
                             debug!(
@@ -112,8 +118,15 @@ where
                 }
             }
         }
-
         Ok(())
+    }
+
+    // maps the key to the sunlab node who stores the value
+    pub fn get_key_owner(&self, key: &K) -> &NodeId {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let cluster_index = (hasher.finish() as usize) % self.cluster.len();
+        &self.cluster[cluster_index]
     }
 }
 

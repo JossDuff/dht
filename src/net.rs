@@ -23,9 +23,6 @@ pub struct ReadyMessage(NodeId);
 pub struct Peers<K, V> {
     pub inbox: mpsc::Receiver<(NodeId, Message<K, V>)>,
     senders: HashMap<NodeId, mpsc::Sender<Message<K, V>>>,
-    // all the nodes in this cluster, in consistent ordering
-    cluster: Vec<NodeId>,
-    pub my_node_id: NodeId,
 }
 
 impl<K, V> Peers<K, V>
@@ -41,14 +38,6 @@ where
             .ok_or_else(|| anyhow!("unknown peer: {}", to))?;
         sender.send(msg).await?;
         Ok(())
-    }
-
-    // maps the key to the sunlab node who stores the value
-    pub fn get_key_owner(&self, key: &K) -> &NodeId {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        let cluster_index = (hasher.finish() as usize) % self.cluster.len();
-        &self.cluster[cluster_index]
     }
 }
 
@@ -121,7 +110,10 @@ where
     Ok(bincode::deserialize(&buffer)?)
 }
 
-pub async fn connect_all<K, V>(my_name: &str, sunlab_nodes: Vec<String>) -> Result<Peers<K, V>>
+pub async fn connect_all<K, V>(
+    my_name: &str,
+    sunlab_nodes: &Vec<String>,
+) -> Result<(Peers<K, V>, Vec<NodeId>, NodeId)>
 where
     K: Serialize + for<'de> Deserialize<'de> + std::marker::Send + Sync + 'static,
     V: Serialize + for<'de> Deserialize<'de> + std::marker::Send + Sync + 'static,
@@ -171,7 +163,7 @@ where
     };
 
     // Spawn connect tasks for each peer
-    for peer_name in &sunlab_nodes {
+    for peer_name in sunlab_nodes {
         let peer_name = peer_name.clone();
         let sender = conn_sender.clone();
         let my_node_id = my_node_id.clone();
@@ -236,12 +228,14 @@ where
         senders.insert(peer_id, outbox_sender);
     }
 
-    Ok(Peers {
-        inbox: inbox_receiver,
-        senders,
+    Ok((
+        Peers {
+            inbox: inbox_receiver,
+            senders,
+        },
         cluster,
         my_node_id,
-    })
+    ))
 }
 
 async fn connect_with_retry(
