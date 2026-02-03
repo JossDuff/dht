@@ -8,6 +8,7 @@ set -e
 USERNAME="jod323"
 DOMAIN="cse.lehigh.edu"
 LOG_DIR="logs"
+TARGET_DIR="${CARGO_TARGET_DIR:-$PROJECT_DIR/target}"
 
 # All known Sunlab nodes
 ALL_NODES=(
@@ -318,7 +319,7 @@ cmd_run() {
         local connections
         connections=$(get_connections "$node" "${nodes[@]}")
 
-        local cmd="$project_dir/target/release/dht --name $node --connections $connections"
+        local cmd="$TARGET_DIR/release/dht --name $node --connections $connections"
         if [[ -n "$num_keys" ]]; then
             cmd="$cmd --num-keys $num_keys"
         fi
