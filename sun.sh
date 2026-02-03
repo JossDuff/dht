@@ -319,7 +319,7 @@ cmd_run() {
         local connections
         connections=$(get_connections "$node" "${nodes[@]}")
 
-        local cmd="$TARGET_DIR/release/dht --name $node --connections $connections"
+        local cmd="cd $project_dir && cargo build --release --quiet && $TARGET_DIR/release/dht --name $node --connections $connections"
         if [[ -n "$num_keys" ]]; then
             cmd="$cmd --num-keys $num_keys"
         fi
