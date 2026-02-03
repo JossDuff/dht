@@ -170,12 +170,17 @@ where
         let my_name = my_name.clone();
 
         tokio::spawn(async move {
+            let peer_id = node_to_index(&peer_name).expect("invalid peer name");
+            let peer_node_id = NodeId {
+                sunlab_name: peer_name.clone(),
+                id: peer_id,
+            };
+
             match connect_with_retry(&peer_name, 5, Duration::from_secs(1)).await {
                 Ok(mut stream) => {
                     // TODO: benchmark
                     //let _ = stream.set_nodelay(true);
 
-                    // Identify ourselves
                     if let Err(e) =
                         send_msg(&mut stream, &ReadyPeerMessage(my_node_id.clone())).await
                     {
@@ -183,7 +188,7 @@ where
                         return;
                     }
                     info!("[{}] Connected to {}", my_name, peer_name);
-                    let _ = sender.send((my_node_id, stream)).await;
+                    let _ = sender.send((peer_node_id, stream)).await;
                 }
                 Err(e) => error!("[{}] Failed to connect to {}: {}", my_name, peer_name, e),
             }

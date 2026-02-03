@@ -325,7 +325,7 @@ cmd_run() {
         local connections
         connections=$(get_connections "$node" "${nodes[@]}")
 
-        local cmd="cd $project_dir && cargo build --release --quiet --target-dir $TARGET_DIR && $TARGET_DIR/release/dht --name $node --connections $connections"
+        local cmd="cd $project_dir && cargo build --release --quiet --target-dir $TARGET_DIR && RUST_LOG=info $TARGET_DIR/release/dht --name $node --connections $connections"
         if [[ -n "$num_keys" ]]; then
             cmd="$cmd --num-keys $num_keys"
         fi

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use dht::{Config, LocalMessage, Node};
 use rand::Rng;
@@ -10,6 +10,9 @@ use tracing::{error, info};
 // TODO: varying number of worker threads
 #[tokio::main]
 async fn main() -> Result<()> {
+    // init logger
+    tracing_subscriber::fmt::init();
+
     let config = Config::parse();
     let num_keys = config.num_keys;
 
@@ -19,7 +22,7 @@ async fn main() -> Result<()> {
     // make initial connections
     let (mut node, sender) = Node::<u64, u8>::new(config).await?;
 
-    // run the node in its own task
+    // run the node event handlers in their own task
     tokio::spawn(async move {
         if let Err(e) = node.run().await {
             error!("{e}");
@@ -28,6 +31,9 @@ async fn main() -> Result<()> {
 
     info!("Generating {} key value pairs", num_keys);
     let test_data = generate_test_data(num_keys);
+
+    // Give the node time to start its event loop
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     info!("Starting test");
     let start = Instant::now();
@@ -44,7 +50,9 @@ async fn main() -> Result<()> {
                         key: data.key,
                         response_sender,
                     };
-                    sender.send(message).await.unwrap();
+                    if let Err(e) = sender.send(message).await {
+                        error!("Error sending get operation {e}");
+                    }
                     response_receiver.await.unwrap();
                 }
                 Operation::Put => {
