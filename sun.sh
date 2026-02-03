@@ -8,6 +8,7 @@ set -e
 USERNAME="jod323"
 DOMAIN="cse.lehigh.edu"
 LOG_DIR="logs"
+PORT="1895"
 # scratch is a larger partition on sunlab that resides per-machine
 TARGET_DIR="/scratch/.cargo/${USERNAME}/target"
 
@@ -62,25 +63,35 @@ EOF
     exit 0
 }
 
-# Get load for a single node
+# Get load and port status for a single node
+# Output format: "load node port_status" where port_status is "free" or "busy"
 probe_node() {
     local node=$1
     local host="${node}.${DOMAIN}"
 
-    local load=$(ssh -o StrictHostKeyChecking=no \
+    local result=$(ssh -o StrictHostKeyChecking=no \
         -o ConnectTimeout=3 \
         -o BatchMode=yes \
         "${USERNAME}@${host}" \
-        "cat /proc/loadavg | cut -d' ' -f1" 2>/dev/null)
+        "load=\$(cat /proc/loadavg | cut -d' ' -f1); \
+         if ss -tlnp 2>/dev/null | grep -q ':${PORT} ' || netstat -tlnp 2>/dev/null | grep -q ':${PORT} '; then \
+           port_status=busy; \
+         else \
+           port_status=free; \
+         fi; \
+         echo \"\$load \$port_status\"" 2>/dev/null)
 
-    if [[ -n "$load" ]]; then
-        echo "$load $node"
+    if [[ -n "$result" ]]; then
+        local load=$(echo "$result" | cut -d' ' -f1)
+        local port_status=$(echo "$result" | cut -d' ' -f2)
+        echo "$load $node $port_status"
     fi
 }
 
 # Probe all nodes in parallel and return sorted by load
+# Output format: "load node port_status" per line
 get_sorted_nodes() {
-    echo -e "${CYAN}Probing ${#ALL_NODES[@]} nodes for CPU load...${NC}" >&2
+    echo -e "${CYAN}Probing ${#ALL_NODES[@]} nodes for CPU load and port ${PORT}...${NC}" >&2
 
     local tmp_file=$(mktemp)
 
@@ -118,34 +129,41 @@ cmd_kill() {
 cmd_list() {
     echo -e "${GREEN}=== Sunlab Node Status ===${NC}"
     echo ""
-    printf "%-12s %s\n" "NODE" "LOAD (1min)"
-    printf "%-12s %s\n" "----" "----------"
+    printf "%-12s %-12s %s\n" "NODE" "LOAD (1min)" "PORT ${PORT}"
+    printf "%-12s %-12s %s\n" "----" "----------" "--------"
 
-    get_sorted_nodes | while read load node; do
-        if (($(echo "$load < 1.0" | bc -l))); then
+    get_sorted_nodes | while read load node port_status; do
+        if [[ "$port_status" == "busy" ]]; then
+            color=$RED
+            port_display="BUSY"
+        elif (($(echo "$load < 1.0" | bc -l))); then
             color=$GREEN
+            port_display="free"
         elif (($(echo "$load < 3.0" | bc -l))); then
             color=$YELLOW
+            port_display="free"
         else
             color=$RED
+            port_display="free"
         fi
-        printf "${color}%-12s %s${NC}\n" "$node" "$load"
+        printf "${color}%-12s %-12s %s${NC}\n" "$node" "$load" "$port_display"
     done
     echo ""
 }
 
-# Select N least-loaded nodes
+# Select N least-loaded nodes with free ports
 select_nodes() {
     local num_nodes=$1
 
-    mapfile -t SORTED < <(get_sorted_nodes)
+    # Filter to only nodes with free ports, then take by load
+    mapfile -t SORTED < <(get_sorted_nodes | grep ' free$')
 
     if [[ ${#SORTED[@]} -lt $num_nodes ]]; then
-        echo -e "${RED}Error: Only ${#SORTED[@]} nodes available, but $num_nodes requested${NC}" >&2
+        echo -e "${RED}Error: Only ${#SORTED[@]} available nodes (with free port), but $num_nodes requested${NC}" >&2
         exit 1
     fi
 
-    echo -e "${GREEN}Selected nodes (by lowest load):${NC}" >&2
+    echo -e "${GREEN}Selected nodes (by lowest load, port ${PORT} free):${NC}" >&2
     printf "  %-12s %s\n" "NODE" "LOAD" >&2
 
     for i in $(seq 0 $((num_nodes - 1))); do
