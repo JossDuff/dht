@@ -123,7 +123,7 @@ where
     info!("[{}] Listening on {}", my_name, listen_addr);
 
     // Channel for completed connections (from both accept and connect paths)
-    let (conn_sender, mut conn_receiver) = mpsc::channel::<(NodeId, TcpStream)>(16);
+    let (conn_sender, mut conn_receiver) = mpsc::channel::<(NodeId, TcpStream)>(64);
 
     // Spawn acceptor task
     let accept_sender = conn_sender.clone();
@@ -133,7 +133,7 @@ where
             match listener.accept().await {
                 Ok((mut stream, addr)) => {
                     // TODO: benchmark
-                    //let _ = stream.set_nodelay(true);
+                    let _ = stream.set_nodelay(true);
 
                     // Expect Ready message to identify peer
                     match recv_msg(&mut stream).await {
@@ -179,7 +179,7 @@ where
             match connect_with_retry(&peer_name, 5, Duration::from_secs(1)).await {
                 Ok(mut stream) => {
                     // TODO: benchmark
-                    //let _ = stream.set_nodelay(true);
+                    let _ = stream.set_nodelay(true);
 
                     if let Err(e) =
                         send_msg(&mut stream, &ReadyPeerMessage(my_node_id.clone())).await

@@ -88,9 +88,6 @@ async fn main() -> Result<()> {
     let avg = latencies.iter().sum::<Duration>() / latencies.len() as u32;
     info!("Latency avg: {:?}, p50: {:?}, p99: {:?}", avg, p50, p99);
 
-    // wait until the node is ready
-    info!("Starting test.");
-
     Ok(())
 }
 

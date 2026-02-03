@@ -86,7 +86,7 @@ where
             connect_all::<K, V>(&config.name, &config.connections).await?;
 
         // for sending/ receiving messages from the test harness
-        let (local_sender, local_inbox) = mpsc::channel(16);
+        let (local_sender, local_inbox) = mpsc::channel(64);
 
         Ok((
             Self {
