@@ -128,7 +128,6 @@ where
         loop {
             match listener.accept().await {
                 Ok((mut stream, addr)) => {
-                    // TODO: benchmark
                     let _ = stream.set_nodelay(true);
 
                     // Expect Ready message to identify peer
@@ -174,7 +173,6 @@ where
 
             match connect_with_retry(&peer_name, 5, Duration::from_secs(1)).await {
                 Ok(mut stream) => {
-                    // TODO: benchmark
                     let _ = stream.set_nodelay(true);
 
                     if let Err(e) =
