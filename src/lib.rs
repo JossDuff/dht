@@ -139,7 +139,7 @@ where
                     // we need to request the key's owner
                     let req_id: u64 = rand::rng().random();
                     let request: PeerMessage<K, V> = PeerMessage::Get { key, req_id };
-                    let _ = self.peers.send(key_owner, request).await?;
+                    self.peers.send(key_owner, request).await?;
 
                     // create a task awaiting the response from a peer
                     let mut awaiting_get_response = self.awaiting_get_response.lock().await;
@@ -177,7 +177,7 @@ where
                     // we need to request the key's owner
                     let req_id: u64 = rand::rng().random();
                     let request: PeerMessage<K, V> = PeerMessage::Put { key, req_id, val };
-                    let _ = self.peers.send(key_owner, request).await?;
+                    self.peers.send(key_owner, request).await?;
 
                     // create a task awaiting the response from a peer
                     let mut awaiting_put_response = self.awaiting_put_response.lock().await;
@@ -228,7 +228,7 @@ where
             }
             // peer is asking us for a put request
             PeerMessage::Put { key, val, req_id } => {
-                let result = self.local_insert(key.clone(), val).await;
+                let result = self.local_insert(key, val).await;
                 let resp: PeerMessage<K, V> = PeerMessage::PutResponse {
                     success: result,
                     req_id,
@@ -283,7 +283,7 @@ where
 
     async fn local_get(&self, key: &K) -> Option<V> {
         let db = self.db.lock().await;
-        db.get(key).map(|x| x.clone())
+        db.get(key).cloned()
     }
 
     async fn local_insert(&self, key: K, value: V) -> bool {

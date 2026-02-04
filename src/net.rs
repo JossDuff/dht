@@ -209,7 +209,7 @@ where
     let (inbox_sender, inbox_receiver) = mpsc::channel::<(NodeId, PeerMessage<K, V>)>(256);
     let mut senders = HashMap::new();
     // list of all nodes in the cluster
-    let mut cluster: Vec<NodeId> = streams.iter().map(|(x, _)| x.clone()).collect();
+    let mut cluster: Vec<NodeId> = streams.keys().cloned().collect();
     // include this node
     cluster.push(my_node_id.clone());
     // sort by id
