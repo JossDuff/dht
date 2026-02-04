@@ -28,7 +28,10 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Generating {} key value pairs", num_keys);
+    info!(
+        "Generating {} key value pairs with range of {}",
+        num_keys, key_range
+    );
     let test_data = generate_test_data(num_keys, key_range);
 
     // Give the node time to start its event loop
@@ -89,7 +92,8 @@ async fn main() -> Result<()> {
 
     let _ = node_handle.await?;
 
-    Ok(())
+    // TODO: graceful, non-janky exit
+    std::process::exit(0);
 }
 
 fn generate_test_data(num_keys: u64, key_range: u64) -> Vec<TestData> {
