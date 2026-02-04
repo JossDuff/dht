@@ -1,14 +1,12 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::Parser;
 use dht::{Config, LocalMessage, Node};
 use rand::Rng;
 use std::time::{Duration, Instant};
-use std::{collections::HashMap, sync::mpsc};
 use tokio::sync::oneshot;
 use tracing::{error, info};
 
-// TODO: varying number of worker threads
-#[tokio::main]
+#[tokio::main(worker_threads = 3)]
 async fn main() -> Result<()> {
     // init logger
     tracing_subscriber::fmt::init();
@@ -92,12 +90,12 @@ async fn main() -> Result<()> {
 }
 
 fn generate_test_data(num_keys: u64) -> Vec<TestData> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..num_keys)
         .map(|_| TestData {
-            key: rng.gen(),
-            val: rng.gen(),
-            operation: if rng.gen_bool(0.8) {
+            key: rng.random(),
+            val: rng.random(),
+            operation: if rng.random_bool(0.8) {
                 Operation::Get
             } else {
                 Operation::Put

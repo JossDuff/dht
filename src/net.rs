@@ -2,11 +2,7 @@ use super::NodeId;
 use super::PeerMessage;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
-    hash::{Hash, Hasher},
-    time::Duration,
-};
+use std::{collections::HashMap, hash::Hash, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},

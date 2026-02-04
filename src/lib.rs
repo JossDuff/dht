@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum PeerMessage<K, V> {
@@ -137,7 +137,7 @@ where
                         .map_err(|_| anyhow!("Receiver for local get on key {:?} dropped", key))?;
                 } else {
                     // we need to request the key's owner
-                    let req_id: u64 = rand::thread_rng().gen();
+                    let req_id: u64 = rand::rng().random();
                     let request: PeerMessage<K, V> = PeerMessage::Get { key, req_id };
                     let _ = self.peers.send(key_owner, request).await?;
 
@@ -152,7 +152,7 @@ where
                         match get_receiver.await {
                             Ok(peer_get_response) => {
                                 // send get response back to test harness
-                                response_sender.send(peer_get_response);
+                                let _ = response_sender.send(peer_get_response);
                             }
                             Err(e) => {
                                 error!("Receive error waiting for getResponse: {}", e);
@@ -175,7 +175,7 @@ where
                         .map_err(|_| anyhow!("Receiver for local put on key {:?} dropped", key))?;
                 } else {
                     // we need to request the key's owner
-                    let req_id: u64 = rand::thread_rng().gen();
+                    let req_id: u64 = rand::rng().random();
                     let request: PeerMessage<K, V> = PeerMessage::Put { key, req_id, val };
                     let _ = self.peers.send(key_owner, request).await?;
 
@@ -190,7 +190,7 @@ where
                         match put_receiver.await {
                             Ok(peer_put_response) => {
                                 // send get response back to test harness
-                                response_sender.send(peer_put_response);
+                                let _ = response_sender.send(peer_put_response);
                             }
                             Err(e) => {
                                 error!("Receive error waiting for putResponse: {}", e);
@@ -206,7 +206,7 @@ where
 
     // handles messages from the network
     async fn handle_peer_message(&self, from: NodeId, msg: PeerMessage<K, V>) -> Result<()> {
-        info!("Got {:?} from {}", msg, from);
+        debug!("Got {:?} from {}", msg, from);
         match msg {
             // peer is asking us for a get request
             PeerMessage::Get { key, req_id } => {
