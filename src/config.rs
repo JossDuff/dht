@@ -15,4 +15,8 @@ pub struct Config {
     /// Number of keys to test on
     #[arg(short, long, default_value = "1000000")]
     pub num_keys: u64,
+
+    /// Range of keys
+    #[arg(short, long, default_value = "1000")]
+    pub key_range: u64,
 }

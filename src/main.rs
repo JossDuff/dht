@@ -13,6 +13,7 @@ async fn main() -> Result<()> {
 
     let config = Config::parse();
     let num_keys = config.num_keys;
+    let key_range = config.key_range;
 
     info!("I am {}", config.name);
     info!("I will connect to {:?}", config.connections);
@@ -28,7 +29,7 @@ async fn main() -> Result<()> {
     });
 
     info!("Generating {} key value pairs", num_keys);
-    let test_data = generate_test_data(num_keys);
+    let test_data = generate_test_data(num_keys, key_range);
 
     // Give the node time to start its event loop
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -89,11 +90,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn generate_test_data(num_keys: u64) -> Vec<TestData> {
+fn generate_test_data(num_keys: u64, key_range: u64) -> Vec<TestData> {
     let mut rng = rand::rng();
     (0..num_keys)
         .map(|_| TestData {
-            key: rng.random(),
+            key: rng.random_range(0..key_range),
             val: rng.random(),
             operation: if rng.random_bool(0.8) {
                 Operation::Get

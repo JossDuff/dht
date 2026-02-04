@@ -42,6 +42,7 @@ Commands:
 Options:
   -n <num>      Number of nodes to use (required for 'run' and 'exec')
   -k <num>      Number of keys for benchmark (passed to dht)
+  -r <num>      Key range for benchmark (passed to dht)
   -d <dir>      Project directory (default: current directory)
   -h, --help    Show this help
 
@@ -49,6 +50,7 @@ Examples:
   sun list
   sun run -n 3
   sun run -n 3 -k 100000
+  sun run -n 3 -k 100000 -r 1000
   sun run -n 3 -- --keys 1000 --ops 50000
   sun run -n 5 -d ~/dev/cse476/project -- --config config.toml
   sun exec -n 3 -- hostname
@@ -284,7 +286,8 @@ cmd_run() {
     local num_nodes="$1"
     local project_dir="$2"
     local num_keys="$3"
-    shift 3
+    local key_range="$4"
+    shift 4
     local program_args="$*"
 
     echo -e "${GREEN}=== Running on Cluster ===${NC}"
@@ -301,6 +304,9 @@ cmd_run() {
     echo -e "Directory: ${BLUE}$project_dir${NC}"
     if [[ -n "$num_keys" ]]; then
         echo -e "Num keys: ${BLUE}$num_keys${NC}"
+    fi
+    if [[ -n "$key_range" ]]; then
+        echo -e "Key range: ${BLUE}$key_range${NC}"
     fi
     if [[ -n "$program_args" ]]; then
         echo -e "Extra args: ${BLUE}$program_args${NC}"
@@ -346,6 +352,9 @@ cmd_run() {
         local cmd="cd $project_dir && cargo build --release --quiet --target-dir $TARGET_DIR && RUST_LOG=info $TARGET_DIR/release/dht --name $node --connections $connections"
         if [[ -n "$num_keys" ]]; then
             cmd="$cmd --num-keys $num_keys"
+        fi
+        if [[ -n "$key_range" ]]; then
+            cmd="$cmd --key-range $key_range"
         fi
         if [[ -n "$program_args" ]]; then
             cmd="$cmd $program_args"
@@ -420,6 +429,7 @@ shift
 NUM_NODES=""
 PROJECT_DIR="$(pwd)"
 NUM_KEYS=""
+KEY_RANGE=""
 EXTRA_ARGS=""
 
 while [[ $# -gt 0 ]]; do
@@ -430,6 +440,10 @@ while [[ $# -gt 0 ]]; do
         ;;
     -k)
         NUM_KEYS="$2"
+        shift 2
+        ;;
+    -r)
+        KEY_RANGE="$2"
         shift 2
         ;;
     -d)
@@ -465,7 +479,7 @@ run)
         echo -e "${RED}Error: Number of nodes must be a positive integer${NC}"
         exit 1
     fi
-    cmd_run "$NUM_NODES" "$PROJECT_DIR" "$NUM_KEYS" $EXTRA_ARGS
+    cmd_run "$NUM_NODES" "$PROJECT_DIR" "$NUM_KEYS" "$KEY_RANGE" $EXTRA_ARGS
     ;;
 exec)
     if [[ -z "$NUM_NODES" ]]; then
