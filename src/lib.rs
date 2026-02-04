@@ -10,7 +10,10 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, error, info};
@@ -21,6 +24,7 @@ pub enum PeerMessage<K, V> {
     GetResponse { val: Option<V>, req_id: u64 },
     Put { key: K, val: V, req_id: u64 },
     PutResponse { success: bool, req_id: u64 },
+    Done,
 }
 
 #[derive(Debug)]
@@ -52,6 +56,8 @@ pub struct Node<K, V: Clone> {
     peers: Peers<K, V>,
     // all the nodes in this cluster, in consistent ordering
     cluster: Vec<NodeId>,
+    // number of nodes that have finished their test
+    done_count: AtomicUsize,
     my_node_id: NodeId,
     local_inbox: mpsc::Receiver<LocalMessage<K, V>>,
     db: Arc<Mutex<HashMap<K, V>>>,
@@ -88,10 +94,13 @@ where
         // for sending/ receiving messages from the test harness
         let (local_sender, local_inbox) = mpsc::channel(64);
 
+        let done_count = AtomicUsize::new(0);
+
         Ok((
             Self {
                 peers,
                 cluster,
+                done_count,
                 my_node_id,
                 local_inbox,
                 awaiting_get_response,
@@ -110,7 +119,11 @@ where
                     self.handle_local_message(local_msg).await?;
                 }
                 Some((from, peer_msg)) = self.peers.inbox.recv() => {
-                    self.handle_peer_message(from, peer_msg).await?;
+                    // returns true when all peers are done
+                    if self.handle_peer_message(from, peer_msg).await? {
+                        info!("All peers done, shutting down");
+                        break;
+                    }
                 }
                 else => {
                     info!("All channels closed");
@@ -205,7 +218,7 @@ where
     }
 
     // handles messages from the network
-    async fn handle_peer_message(&self, from: NodeId, msg: PeerMessage<K, V>) -> Result<()> {
+    async fn handle_peer_message(&self, from: NodeId, msg: PeerMessage<K, V>) -> Result<bool> {
         debug!("Got {:?} from {}", msg, from);
         match msg {
             // peer is asking us for a get request
@@ -276,9 +289,18 @@ where
                     }
                 };
             }
+            // a peer has finished their test
+            PeerMessage::Done => {
+                let count = self.done_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if count >= self.cluster.len() - 1 {
+                    // All peers done, we can exit
+                    return Ok(true);
+                }
+            }
         }
 
-        Ok(())
+        // keep running
+        Ok(false)
     }
 
     async fn local_get(&self, key: &K) -> Option<V> {

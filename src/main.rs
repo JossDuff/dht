@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     let (mut node, sender) = Node::<u64, u8>::new(config).await?;
 
     // run the node event handlers in their own task
-    tokio::spawn(async move {
+    let node_handle = tokio::spawn(async move {
         if let Err(e) = node.run().await {
             error!("{e}");
         }
@@ -86,6 +86,8 @@ async fn main() -> Result<()> {
     let p99 = latencies[latencies.len() * 99 / 100];
     let avg = latencies.iter().sum::<Duration>() / latencies.len() as u32;
     info!("Latency avg: {:?}, p50: {:?}, p99: {:?}", avg, p50, p99);
+
+    let _ = node_handle.await?;
 
     Ok(())
 }
